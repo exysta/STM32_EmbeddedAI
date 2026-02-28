@@ -1,86 +1,89 @@
 ############################################
-# 🧠 STM32CubeMX
+# 🧠 STM32CubeMX (generated code)
 ############################################
 
-# Generated code folders (keep your own source if needed)
-Drivers/*
-Middlewares/*
+# Ignore generated HAL / CMSIS / Middleware everywhere
+**/Drivers/**
+**/Middlewares/**
+**/Core/Src/**
+**/Core/Inc/**
 
-# But keep user code sections (optional strategy)
-!Core/Src/main.c
-!Core/Inc/main.h
+# Keep ONLY user entry points
+!**/Core/Src/main.c
+!**/Core/Inc/main.h
 
-# CubeMX project files (keep these)
-!*.ioc
+# Keep CubeMX config files
+!**/*.ioc
+!**/.mxproject
 
 ############################################
-# 🛠 STM32CubeIDE
+# 🛠 STM32CubeIDE / Eclipse
 ############################################
 
-# Build output
-Debug/
-Release/
-build/
-*.elf
-*.bin
-*.hex
-*.map
-*.list
+# Build outputs anywhere
+**/Debug/
+**/Release/
+**/build/
+**/*.elf
+**/*.bin
+**/*.hex
+**/*.map
+**/*.list
 
-# IDE settings
+# Eclipse / CubeIDE metadata
 .project
 .cproject
 .settings/
 .metadata/
-
-# Eclipse temporary files
 *.launch
 
 ############################################
-# 🧾 STM32 HAL / CMSIS generated
+# 🧾 Compilation artifacts
 ############################################
 
-*.o
-*.d
-*.a
-*.su
-*.idb
-*.pdb
+**/*.o
+**/*.d
+**/*.a
+**/*.su
+**/*.idb
+**/*.pdb
 
 ############################################
-# 🤖 STM32 AI Cube (X-CUBE-AI / AI Studio)
+# 🤖 STM32 AI (X-CUBE-AI / STM32Cube.AI / AI Studio)
 ############################################
 
-# Generated AI code
-X-CUBE-AI/App/*
-X-CUBE-AI/Target/*
-X-CUBE-AI/Network/*
+# Generated AI application code
+**/X-CUBE-AI/App/**
+**/X-CUBE-AI/Target/**
+**/X-CUBE-AI/Network/**
 
-# Temporary / cache / reports
-*.onnx
-*.tflite
-*.h5
-*.pb
-*.json
-*.log
+# AI intermediate models & exports
+**/*.onnx
+**/*.tflite
+**/*.h5
+**/*.pb
 
-# AI Studio working directory
-.stm32ai/
-network_c_graph.*
-network_data.*
+# AI logs & configs
+**/*.json
+**/*.log
+
+# AI Studio workspace
+**/.stm32ai/
+**/network_c_graph.*
+**/network_data.*
 
 ############################################
-# 🧪 Python / ML tools (if used with AI Studio)
+# 🧪 Python / ML tooling
 ############################################
 
 venv/
 .env/
-__pycache__/
-*.pyc
+**/__pycache__/
+**/*.pyc
 .ipynb_checkpoints/
 
 ############################################
-# 💻 OS / editor junk
+# 💻 OS / editors
 ############################################
 
 # macOS
@@ -93,7 +96,7 @@ desktop.ini
 # Linux
 *~
 
-# VS Code
+# VSCode
 .vscode/
 
 ############################################
@@ -105,7 +108,7 @@ desktop.ini
 *.tar.gz
 
 ############################################
-# 🔐 Optional (certificates, keys, etc.)
+# 🔐 Sensitive files
 ############################################
 
 *.key
