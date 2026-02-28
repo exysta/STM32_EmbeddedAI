@@ -1,0 +1,113 @@
+############################################
+# 🧠 STM32CubeMX
+############################################
+
+# Generated code folders (keep your own source if needed)
+Drivers/*
+Middlewares/*
+
+# But keep user code sections (optional strategy)
+!Core/Src/main.c
+!Core/Inc/main.h
+
+# CubeMX project files (keep these)
+!*.ioc
+
+############################################
+# 🛠 STM32CubeIDE
+############################################
+
+# Build output
+Debug/
+Release/
+build/
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+
+# IDE settings
+.project
+.cproject
+.settings/
+.metadata/
+
+# Eclipse temporary files
+*.launch
+
+############################################
+# 🧾 STM32 HAL / CMSIS generated
+############################################
+
+*.o
+*.d
+*.a
+*.su
+*.idb
+*.pdb
+
+############################################
+# 🤖 STM32 AI Cube (X-CUBE-AI / AI Studio)
+############################################
+
+# Generated AI code
+X-CUBE-AI/App/*
+X-CUBE-AI/Target/*
+X-CUBE-AI/Network/*
+
+# Temporary / cache / reports
+*.onnx
+*.tflite
+*.h5
+*.pb
+*.json
+*.log
+
+# AI Studio working directory
+.stm32ai/
+network_c_graph.*
+network_data.*
+
+############################################
+# 🧪 Python / ML tools (if used with AI Studio)
+############################################
+
+venv/
+.env/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+############################################
+# 💻 OS / editor junk
+############################################
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Linux
+*~
+
+# VS Code
+.vscode/
+
+############################################
+# 📦 Archives
+############################################
+
+*.zip
+*.tar
+*.tar.gz
+
+############################################
+# 🔐 Optional (certificates, keys, etc.)
+############################################
+
+*.key
+*.pem
+*.crt
