@@ -1,0 +1,24 @@
+# STM32CubeIDE build outputs
+WakeWord_STM32H7/Debug/
+WakeWord_STM32H7/Release/
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+
+# X-CUBE-AI generated model files (contain trained weights – add your own)
+WakeWord_STM32H7/X-CUBE-AI/App/network.c
+WakeWord_STM32H7/X-CUBE-AI/App/network.h
+WakeWord_STM32H7/X-CUBE-AI/App/network_data.c
+WakeWord_STM32H7/X-CUBE-AI/App/network_data.h
+
+# STM32CubeIDE workspace metadata
+.metadata/
+.settings/
+*.launch
+*.cproject.bak
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,144 @@
+###############################################################################
+# WakeWord_STM32H7.ioc  –  STM32CubeMX configuration file
+#
+# Board  : Nucleo-H743ZI2
+# MCU    : STM32H743ZITx
+# Purpose: Wake word detection with INMP441 I2S microphone + X-CUBE-AI
+#
+# Open this file with STM32CubeIDE / STM32CubeMX to regenerate HAL driver
+# code and the X-CUBE-AI network stubs.
+###############################################################################
+
+Mcu.Family=STM32H7
+Mcu.Name=STM32H743ZITx
+Mcu.Package=LQFP144
+Mcu.CPN=STM32H743ZIT6
+
+# ── Project settings ──────────────────────────────────────────────────────────
+ProjectManager.ProjectName=WakeWord_STM32H7
+ProjectManager.ProjectBuildStruct=
+ProjectManager.LibraryCopySrc=1
+ProjectManager.LibraryCopyDest=Drivers
+ProjectManager.ToolChainLocation=
+ProjectManager.MainLocation=Core/Src
+ProjectManager.DefaultFWLocation=true
+ProjectManager.ProjectFileName=WakeWord_STM32H7.ioc
+
+ProjectManager.toolchain=STM32CubeIDE
+
+# ── RCC ───────────────────────────────────────────────────────────────────────
+# HSE from ST-LINK MCO (8 MHz bypass)
+RCC.HSEState=RCC_HSE_BYPASS
+RCC.VDD_VALUE=3.3
+RCC.HSI_VALUE=64000000
+RCC.CSI_VALUE=4000000
+
+# PLL1: SYSCLK = 480 MHz
+RCC.PLL1.PLLState=RCC_PLL_ON
+RCC.PLL1.PLLSource=RCC_PLLSOURCE_HSE
+RCC.PLL1.PLLM=2
+RCC.PLL1.PLLN=240
+RCC.PLL1.PLLP=2
+RCC.PLL1.PLLQ=4
+RCC.PLL1.PLLR=2
+RCC.PLL1.PLLFractional=0
+RCC.PLL1.PLLVCORange=RCC_PLL1VCOWIDE
+RCC.PLL1.PLLInputRange=RCC_PLL1VCIRANGE_2
+
+# PLL3: I2S source = 49.152 MHz (exact for 16 kHz audio)
+# DIVM=4, DIVN=96, DIVP=3 → (8/4) × 96 / 3 = 64 MHz   ← adjust DIVN/P as needed
+# For exact 49.152 MHz: HSE=8, DIVM=5, DIVN=192, DIVP=... use CubeMX wizard.
+# The exact value depends on HSE accuracy; use the CubeMX clock tree to verify.
+RCC.PLL3.PLLState=RCC_PLL_ON
+RCC.PLL3.PLLSource=RCC_PLLSOURCE_HSE
+RCC.PLL3.PLLM=4
+RCC.PLL3.PLLN=96
+RCC.PLL3.PLLP=3
+RCC.PLL3.PLLFractional=0
+
+# I2S2 kernel clock from PLL3.P
+RCC.I2S123ClockSelection=RCC_I2S123CLKSOURCE_PLL3
+
+# ── SPI2 / I2S2 ──────────────────────────────────────────────────────────────
+# INMP441 microphone: master receive, Philips standard, 24-bit data / 32-bit frame
+SPI2.Mode=I2S_MODE_MASTER_RX
+SPI2.IPParameters=Mode,Standard,DataFormat,MCLKOutput,AudioFreq,CPOL,FirstBit
+
+SPI2.Standard=I2S_STANDARD_PHILIPS
+SPI2.DataFormat=I2S_DATAFORMAT_24B
+SPI2.MCLKOutput=I2S_MCLKOUTPUT_DISABLE
+SPI2.AudioFreq=I2S_AUDIOFREQ_16K
+SPI2.CPOL=I2S_CPOL_LOW
+SPI2.FirstBit=I2S_FIRSTBIT_MSB
+
+# GPIO for I2S2
+PB12.Mode=I2S2_WS
+PB12.Signal=SPI2_WS
+PB13.Mode=I2S2_CK
+PB13.Signal=SPI2_SCK
+PB15.Mode=I2S2_SDI
+PB15.Signal=SPI2_MISO
+
+# ── DMA ───────────────────────────────────────────────────────────────────────
+# DMA1 Stream 0 – SPI2/I2S2 RX, circular, half-word, high priority
+DMA1.Request0=SPI2_RX
+DMA1.Stream0=DMA1_Stream0
+DMA1.Direction0=DMA_PERIPH_TO_MEMORY
+DMA1.PeriphInc0=DMA_PINC_DISABLE
+DMA1.MemInc0=DMA_MINC_ENABLE
+DMA1.PeriphDataAlignment0=DMA_PDATAALIGN_HALFWORD
+DMA1.MemDataAlignment0=DMA_MDATAALIGN_HALFWORD
+DMA1.Mode0=DMA_CIRCULAR
+DMA1.Priority0=DMA_PRIORITY_HIGH
+DMA1.FIFOMode0=DMA_FIFOMODE_DISABLE
+
+# ── USART3 ────────────────────────────────────────────────────────────────────
+# Virtual COM port via ST-LINK USB (PD8 TX, PD9 RX)
+USART3.IPParameters=VirtualMode
+USART3.VirtualMode=VM_ASYNC
+PD8.Mode=Asynchronous
+PD8.Signal=USART3_TX
+PD9.Mode=Asynchronous
+PD9.Signal=USART3_RX
+
+# ── User LEDs and button ──────────────────────────────────────────────────────
+# LD1 – green  PB0   output PP
+# LD3 – red    PB14  output PP
+# B1  – user   PC13  input  pull-up
+PB0.GPIO_Label=LD1_GREEN
+PB0.Signal=GPIO_Output
+PB14.GPIO_Label=LD3_RED
+PB14.Signal=GPIO_Output
+PC13.GPIO_Label=B1_USER
+PC13.Signal=GPIO_Input
+
+# ── MPU ───────────────────────────────────────────────────────────────────────
+# Region 0: SRAM (D1 AXI SRAM) – normal, shareable, full access
+CORTEX_M7.MPU_Region0.Enable=MPU_REGION_ENABLE
+CORTEX_M7.MPU_Region0.BaseAddress=0x24000000
+CORTEX_M7.MPU_Region0.Size=MPU_REGION_SIZE_512KB
+CORTEX_M7.MPU_Region0.SubRegionDisable=0x00
+CORTEX_M7.MPU_Region0.TypeExtField=MPU_TEX_LEVEL1
+CORTEX_M7.MPU_Region0.AccessPermission=MPU_REGION_FULL_ACCESS
+CORTEX_M7.MPU_Region0.DisableExec=MPU_INSTRUCTION_ACCESS_ENABLE
+CORTEX_M7.MPU_Region0.IsShareable=MPU_ACCESS_SHAREABLE
+CORTEX_M7.MPU_Region0.IsCacheable=MPU_ACCESS_NOT_CACHEABLE
+CORTEX_M7.MPU_Region0.IsBufferable=MPU_ACCESS_NOT_BUFFERABLE
+
+# ── X-CUBE-AI ─────────────────────────────────────────────────────────────────
+# Uncomment and adjust after importing the Edge Impulse model.
+# The values below are filled in by CubeMX after you click "Generate Code".
+#
+# XCUBEAI.NetworkName=network
+# XCUBEAI.ModelFile=<path_to_exported_model>.tflite
+# XCUBEAI.Compression=None
+# XCUBEAI.OutputPath=X-CUBE-AI/App
+
+# ── Software pack versions ────────────────────────────────────────────────────
+Mcu.UserConstants=
+LibraryCopySrc=1
+
+# STM32H7 HAL drivers version (adjust to the version installed in CubeMX)
+STM32Cube.Version=1.11.1
+FW.Family=STM32H7
+FW.Version=1.11.1
