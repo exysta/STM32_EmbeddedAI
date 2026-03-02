@@ -27,7 +27,6 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
-
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -37,12 +36,19 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* USER CODE BEGIN PD */
-#define AUDIO_BLOCK_SIZE      512    // raw DMA samples (includes both slots)
-#define AUDIO_SAMPLES_PER_BLOCK (AUDIO_BLOCK_SIZE / 2)  // real mono samples = 256
-#define SAMPLE_RATE           16000
-#define AUDIO_WINDOW_SIZE     SAMPLE_RATE  // 1 second = 16000 real samples
-#define AUDIO_GAIN 8  // multiply signal by 8, tune this value
+
+// SAI configured as STEREO (2 slots: L + R)
+// INMP441 L/R pin = GND  → drives LEFT slot only, RIGHT slot = zero
+// DMA transfers 32-bit words.
+// One stereo frame = 2 words (L word then R word).
+//
+// AUDIO_BLOCK_FRAMES : number of stereo frames per DMA half-transfer
+// AUDIO_BLOCK_WORDS  : total 32-bit words per half (L+R interleaved)
+#define AUDIO_BLOCK_FRAMES   256
+#define AUDIO_BLOCK_WORDS    (AUDIO_BLOCK_FRAMES * 2)   // 512 words per half
+
+#define SAMPLE_RATE          16000
+#define AUDIO_GAIN           10      // applied to 24-bit value — tune as needed
 
 /* USER CODE END PD */
 
@@ -54,14 +60,17 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-/* USER CODE BEGIN PV */
 
-int16_t dma_rx_buffer[AUDIO_BLOCK_SIZE * 2];   // ping-pong, raw stereo slots
-int16_t audio_window[AUDIO_WINDOW_SIZE];        // clean mono samples
+// Full ping-pong DMA buffer: 2 halves × AUDIO_BLOCK_WORDS words = 1024 int32
+int32_t dma_rx_buffer[AUDIO_BLOCK_WORDS * 2];
+
+// Set to 1 (first half ready) or 2 (second half ready) by DMA callbacks
 volatile uint8_t audio_block_ready = 0;
 
-uint32_t blocks_captured = 0;
-uint8_t dump_done = 0;
+// Output: AUDIO_BLOCK_FRAMES mono samples packed as 3-byte little-endian 24-bit
+// + 4-byte sync header prefix
+static uint8_t tx_buf[4 + AUDIO_BLOCK_FRAMES * 3];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,14 +86,6 @@ int _write(int file, char *ptr, int len)
 {
 	HAL_UART_Transmit(&huart3, (uint8_t*)ptr, len, HAL_MAX_DELAY);
 	return len;
-}
-
-void stream_audio_uart(int16_t *buffer, uint32_t num_samples) {
-	// Send raw bytes — 2 bytes per sample, little endian
-	HAL_UART_Transmit(&huart3,
-			(uint8_t*)buffer,
-			num_samples * sizeof(int16_t),
-			HAL_MAX_DELAY);
 }
 /* USER CODE END 0 */
 
@@ -124,47 +125,75 @@ int main(void)
   MX_SAI1_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+
+	// Prepopulate the sync header at the start of tx_buf (never changes)
+	tx_buf[0] = 0xAA;
+	tx_buf[1] = 0xBB;
+	tx_buf[2] = 0xCC;
+	tx_buf[3] = 0xDD;
+
+	// Start DMA circular capture
+	// Element count = total words in the full ping-pong buffer
 	if (HAL_SAI_Receive_DMA(&hsai_BlockA1,
 			(uint8_t*)dma_rx_buffer,
-			AUDIO_BLOCK_SIZE * 2) != HAL_OK) {
+			AUDIO_BLOCK_WORDS * 2) != HAL_OK)
+	{
 		Error_Handler();
 	}
 
-	printf("hello from stm32\r\n");
+	printf("STM32 audio stream ready\r\n");
+	uint32_t sai_clk = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_SAI1);
+	uint32_t mckdiv = hsai_BlockA1.Init.Mckdiv;
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-	while (1) {
+	while (1)
+	{
 
-		if (audio_block_ready != 0) {
-			int16_t *src = (audio_block_ready == 1) ?
-					dma_rx_buffer :
-					dma_rx_buffer + AUDIO_BLOCK_SIZE;
+		if (audio_block_ready != 0)
+		{
+			// Grab and clear atomically before processing
+			uint8_t block = audio_block_ready;
 			audio_block_ready = 0;
 
-			// Decimate to mono (left channel only)
-			int16_t mono_block[AUDIO_SAMPLES_PER_BLOCK];
-			for (int i = 0; i < AUDIO_SAMPLES_PER_BLOCK; i++) {
-				mono_block[i] = src[i * 2];
+			// Select the correct half of the ping-pong buffer
+			int32_t *src = (block == 1) ?
+					dma_rx_buffer :
+					dma_rx_buffer + AUDIO_BLOCK_WORDS;
+
+			// Extract left channel and pack to 24-bit
+			// L+R are interleaved: word[0]=L, word[1]=R, word[2]=L ...
+			// → left channel is at index i*2
+			// INMP441 left-justifies 24-bit audio in the 32-bit word:
+			// bits[31:8] = audio data, bits[7:0] = padding zeros
+			// → arithmetic right shift by 8 gives signed 24-bit in int32
+			for (int i = 0; i < AUDIO_BLOCK_FRAMES; i++)
+			{
+				int32_t raw    = src[i * 2];
+				int32_t s24    = raw >> 8;
+				int32_t gained = s24 * AUDIO_GAIN;
+
+				// Clamp to signed 24-bit range [-8388608, 8388607]
+				if (gained >  8388607) gained =  8388607;
+				if (gained < -8388608) gained = -8388608;
+
+				// Pack as little-endian 24-bit into tx_buf after the 4-byte header
+				uint8_t *p = &tx_buf[4 + i * 3];
+				p[0] = (uint8_t)(gained        & 0xFF);
+				p[1] = (uint8_t)((gained >>  8) & 0xFF);
+				p[2] = (uint8_t)((gained >> 16) & 0xFF);
 			}
 
-			for (int i = 0; i < AUDIO_SAMPLES_PER_BLOCK; i++) {
-			    int32_t amplified = (int32_t)mono_block[i] * AUDIO_GAIN;
-			    // Clamp to int16 range to avoid overflow
-			    if (amplified > 32767)  amplified = 32767;
-			    if (amplified < -32768) amplified = -32768;
-			    mono_block[i] = (int16_t)amplified;
-			}
-			// Stream over UART
-			stream_audio_uart(mono_block, AUDIO_SAMPLES_PER_BLOCK);
+			// Single transmit: header + packed audio
+			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
 		}
-	}
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
+	}
   /* USER CODE END 3 */
 }
 
@@ -232,28 +261,24 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-// Called when first half of DMA buffer is full
-void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
-	if (hsai->Instance == SAI1_Block_A) {
+void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai)
+{
+	if (hsai->Instance == SAI1_Block_A)
 		audio_block_ready = 1;
-	}
 }
 
-// Called when second half of DMA buffer is full
-void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai) {
-	if (hsai->Instance == SAI1_Block_A) {
+void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai)
+{
+	if (hsai->Instance == SAI1_Block_A)
 		audio_block_ready = 2;
-	}
 }
 
-// Optional: catch SAI errors
-void HAL_SAI_ErrorCallback(SAI_HandleTypeDef *hsai) {
-	if (hsai->Instance == SAI1_Block_A) {
-		// Log error, restart DMA
+void HAL_SAI_ErrorCallback(SAI_HandleTypeDef *hsai)
+{
+	if (hsai->Instance == SAI1_Block_A)
 		HAL_SAI_Receive_DMA(&hsai_BlockA1,
 				(uint8_t*)dma_rx_buffer,
-				AUDIO_BLOCK_SIZE * 2);
-	}
+				AUDIO_BLOCK_WORDS * 2);
 }
 
 /* USER CODE END 4 */
