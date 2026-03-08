@@ -34,9 +34,9 @@ This project implements a complete **keyword spotting pipeline** on a resource-c
 ```
 [✅] Hardware bring-up        — SAI + INMP441 acquisition validated via UART → WAV
 [✅] Dataset generation       — 2000 wakeword + 2000 negative synthetic samples
-[🔄] Feature extraction       — MFCC preprocessing pipeline (in progress)
-[⬜] Model training           — DS-CNN architecture (planned)
-[⬜] INT8 quantization        — Post-training quantization via TFLite (planned)
+[✅] Feature extraction       — MFCC (97×40) with per-feature normalisation
+[✅] Model training           — DS-CNN + SE: 98.7% accuracy, 32K params, 31 KB INT8
+[🔄] INT8 quantization        — QAT via TFLite (next)
 [⬜] STM32Cube.AI deployment  — C inference code generation + firmware integration (planned)
 [⬜] Benchmarking             — Inference time, RAM/Flash profiling on target (planned)
 ```
@@ -132,17 +132,59 @@ Each base TTS sample is augmented with `audiomentations`:
 
 ---
 
+## Feature Extraction (MFCC)
+
+Each 1-second WAV clip is transformed into a compact 2D feature map via **MFCC (Mel-Frequency Cepstral Coefficients)** before being fed to the neural network.
+
+### Pipeline
+
+```
+WAV (16 000 samples)
+ → Pre-emphasis (0.97)
+ → Framing (40 ms window, 10 ms hop → 97 frames)
+ → Hann window
+ → 1024-point FFT → Power spectrum
+ → 40 Mel filter banks → Log compression
+ → DCT → 40 MFCC coefficients
+ → Per-feature normalization (global μ/σ)
+
+Output: (97, 40) matrix per sample — 3.9 KB in INT8
+```
+
+### Parameter choices
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| Mel bands / MFCC coefficients | 40 / 40 | DS-CNN reference config (Zhang et al., 2017). Keeping all 40 preserves full spectral detail — critical for discriminating the final sibilant in "Gragas". STM32H7 has the RAM headroom (3.9 KB vs 1 MB). |
+| Window / Hop | 40 ms / 10 ms | 75 % overlap. Window captures ≥ 2 pitch cycles; hop gives fine temporal resolution for phoneme transitions. |
+| FFT size | 1024 | Power-of-2 ≥ window length (640). Zero-pads each frame for finer frequency resolution via CMSIS-DSP `arm_rfft_f32`. |
+| Normalization | Per-feature global (z-score) | Cheapest at inference (40 sub + 40 mul per frame, ≈ 28 µs). Preserves absolute energy — important for silence/noise rejection. Only 320 B of Flash for the stored μ/σ arrays. |
+
+> **On-device parity:** The same pipeline parameters will be reimplemented in C using CMSIS-DSP on the STM32. `librosa` is used during training only; the parameter set documented here is the single source of truth for both sides.
+
+---
+
 ## Repository Structure
 
 ```
 STM32_EmbeddedAI/
 │
 ├── Python/
-│   ├── generate_dataset.py        # TTS + augmentation pipeline (edge-tts)
-│   ├── preprocessing/             # MFCC feature extraction  [planned]
-│   ├── training/                  # DS-CNN model definition  [planned]
-│   ├── quantization/              # INT8 TFLite export       [planned]
-│   └── evaluation/                # Metrics, confusion matrix [planned]
+│   ├── DatasetGeneration/
+│   │   └── generate_wakeword_dataset.py   # TTS + augmentation pipeline (edge-tts)
+│   ├── PythonMicBridge/
+│   │   └── MicBridgeCOM.py                # UART → WAV bridge for hardware validation
+│   ├── Preprocessing/
+│   │   ├── mfcc_config.py                 # MFCC hyperparameters (single source of truth)
+│   │   └── extract_mfcc.py                # WAV → MFCC → .npy extraction pipeline
+│   ├── Training/
+│   │   ├── train_config.py                # Training hyperparameters
+│   │   ├── ds_cnn_model.py                # DS-CNN + SE attention + SpecAugment
+│   │   ├── train.py                       # Main training pipeline
+│   │   └── evaluate.py                    # Metrics, confusion matrix
+│   ├── dataset/                           # Generated WAV samples
+│   ├── features/                          # Extracted MFCC arrays (X.npy, y.npy)
+│   └── models/                            # Trained models (.keras, .tflite)
 │
 └── STM32/
     └── EmbeddedAI/
@@ -156,34 +198,42 @@ STM32_EmbeddedAI/
 ## Roadmap
 
 ### Phase 1 — Hardware & Dataset ✅
+
 - [x] SAI + INMP441 I2S acquisition working and validated
 - [x] UART → WAV pipeline for acoustic validation on PC
 - [x] Synthetic dataset: 2000 wakeword + 2000 negative samples
 - [x] Multi-voice, multi-prosody augmentation pipeline
 
-### Phase 2 — Feature Extraction 🔄
-- [ ] WAV → 16 kHz mono normalization
-- [ ] MFCC extraction (40 coefficients, 98 time frames, 1-second window)
-- [ ] Export `X.npy` / `y.npy` for training
+### Phase 2 — Feature Extraction ✅
 
-### Phase 3 — Model Training
-- [ ] DS-CNN architecture (Depthwise Separable CNN)
-- [ ] 3-class classification: `gragas` / `negative` / `silence`
-- [ ] Train/val/test split with stratification
-- [ ] Target: > 90% accuracy, < 200 KB model size
+- [x] MFCC parameter selection and justification documented
+- [x] MFCC extraction (40 coefficients, 97 time frames, 1-second window)
+- [x] Export `X.npy` / `y.npy` / `norm_stats.npz` for training
+
+### Phase 3 — Model Training ✅
+
+- [x] DS-CNN architecture with SE attention block (32 194 params)
+- [x] 2-class classification: `wakeword` / `negative`
+- [x] SpecAugment (time + frequency masking) for regularisation
+- [x] Train/val/test split (70/15/15) with stratification
+- [x] **Test accuracy: 98.7%** — precision 0.99, recall 0.98, FPR 1.0%
+- [x] Model size: 125.8 KB float32 / ~31 KB INT8 (target was < 200 KB)
 
 ### Phase 4 — Quantization & Export
-- [ ] INT8 post-training quantization via TensorFlow Lite
-- [ ] Accuracy comparison: float32 vs INT8
+
+- [ ] Quantization-Aware Training (QAT) via `tensorflow-model-optimization`
+- [ ] Accuracy comparison: float32 vs QAT-INT8
 - [ ] `.tflite` export for STM32Cube.AI
 
 ### Phase 5 — STM32 Deployment
+
 - [ ] STM32Cube.AI model import and memory validation
 - [ ] Integrate inference C code into firmware
 - [ ] 1-second sliding window with 50% overlap on SAI circular buffer
 - [ ] Confidence threshold (> 85%) + 500 ms detection debounce
 
 ### Phase 6 — Benchmarking
+
 - [ ] Inference latency via DWT cycle counter (Cortex-M7)
 - [ ] RAM and Flash usage profiling
 - [ ] On-device accuracy vs PC baseline
@@ -197,32 +247,66 @@ STM32_EmbeddedAI/
 |---|---|
 | Dataset generation | Python, edge-tts (Microsoft Neural TTS), audiomentations |
 | Audio features | MFCC — librosa (training) / C implementation (inference) |
-| Model architecture | DS-CNN (Depthwise Separable CNN) |
+| Model architecture | DS-CNN + SE attention (Depthwise Separable CNN) |
 | Training framework | TensorFlow / Keras |
-| Quantization | TFLite INT8 post-training quantization |
+| Quantization | Quantization-Aware Training (QAT) → TFLite INT8 |
 | Deployment tool | STM32Cube.AI (X-CUBE-AI) |
 | Firmware | C, ARM Cortex-M7, STM32 HAL |
 | Toolchain | STM32CubeIDE, GCC ARM Embedded |
 
 ---
 
-## Why DS-CNN?
+## Model Architecture — DS-CNN + SE Attention
 
-Depthwise Separable CNNs are the reference architecture for keyword spotting on microcontrollers, introduced in Google's *Hello Edge* paper (Zhang et al., 2017). They factorize standard convolutions into depthwise + pointwise operations, achieving near state-of-the-art accuracy at a fraction of the compute and memory cost — well within the constraints of a Cortex-M7 running without a hardware ML accelerator.
+Based on Google's *Hello Edge* DS-CNN (Zhang et al., 2017), enhanced with two techniques from recent KWS research (2024–2025):
+
+```text
+Input (97, 40, 1)                     ← MFCC "image": 97 time frames × 40 coefficients
+  │
+  ├─ SpecAugment                      ← training only: random time/freq masking (regularisation)
+  │
+  ├─ Conv2D 4×10, 64 filters + BN + ReLU
+  │     First conv expands 1 → 64 channels.
+  │     The 4×10 kernel spans 4 frames × 10 coefficients
+  │     — sized to capture small phoneme-scale patterns.
+  │
+  ├─ 4× DS-Conv Block:
+  │     DepthwiseConv2D 3×3 + BN + ReLU     (filter each channel independently)
+  │     → SE Block                           (channel attention — see below)
+  │     → Conv2D 1×1 + BN + ReLU            (mix channels back together)
+  │
+  ├─ GlobalAveragePooling2D           ← collapse spatial dims → 64-d vector
+  ├─ Dropout (0.4)                    ← regularisation
+  └─ Dense(2, softmax)                ← [P(negative), P(wakeword)]
+
+Estimated: ~28K params · ~28 KB INT8 · inference < 10 ms on Cortex-M7 @ 280 MHz
+```
+
+### Why Depthwise Separable Convolutions?
+
+A standard conv with 64 input/output channels and a 3×3 kernel costs **36 864 parameters**. A depthwise separable conv splits this into a per-channel 3×3 filter (576 params) + a 1×1 channel mixer (4 096 params) = **4 672 params** — an **8× reduction** with comparable accuracy. This keeps the model well under the 200 KB Flash target.
+
+### Why SE Attention?
+
+A Squeeze-and-Excitation block learns to weight each of the 64 feature maps by importance. It only adds ~2 048 parameters per block (~8 KB total) but helps the network focus on the most discriminative frequency bands — particularly useful for distinguishing the final sibilant **S** in "Gragas" from similar-sounding words.
+
+### Why SpecAugment?
+
+With only 4 000 synthetic samples, overfitting is a real risk. SpecAugment randomly masks bands of time frames and MFCC coefficients during training, forcing the model to learn robust patterns rather than memorising specific time-frequency regions. It costs nothing at inference — the layer is inactive on-device.
 
 ---
 
 ## Target Benchmarks
 
-| Metric | Target |
-|---|---|
-| Inference latency | < 50 ms |
-| RAM footprint | < 512 KB |
-| Flash (model + firmware) | < 1.5 MB |
-| Test set accuracy | > 90 % |
-| False positive rate | < 1 per minute |
+| Metric | Target | Measured (PC) |
+|---|---|---|
+| Inference latency | < 50 ms | *pending (on-device)* |
+| RAM footprint | < 512 KB | *pending (on-device)* |
+| Flash (model + firmware) | < 1.5 MB | ~31 KB INT8 model |
+| Test set accuracy | > 90 % | **98.7 %** |
+| False positive rate | < 1 per minute | 1.0 % on test set |
 
-*Based on STM32H7A3ZIQ specs (1 MB RAM, 2 MB Flash, 280 MHz Cortex-M7). Will be updated with measured values.*
+*PC results on synthetic TTS data. On-device metrics will be measured in Phase 6 with real INMP441 audio.*
 
 ---
 
@@ -247,20 +331,24 @@ python generate_dataset.py
 # Runtime: ~15-25 min
 ```
 
-### Extract features *(planned)*
+### Extract features
 
 ```bash
-python preprocessing/extract_mfcc.py --input dataset/ --output features/
+cd Python/Preprocessing
+python extract_mfcc.py
+# Output: ../features/X.npy, ../features/y.npy, ../features/norm_stats.npz
 ```
 
-### Train model *(planned)*
+### Train model
 
 ```bash
-python training/train.py --features features/ --output models/
+cd Python/Training
+python train.py
+# Output: ../models/gragas_dscnn.keras
+# Evaluate: python evaluate.py
 ```
 
 ---
-
 
 ## License
 

@@ -1,0 +1,19 @@
+# ── Dataset Generation ─────────────────────────────────────────────
+edge-tts>=6.1.0
+pydub>=0.25.1
+audiomentations>=0.35.0
+soundfile>=0.12.1
+scipy>=1.12.0
+
+# ── Preprocessing (MFCC) ──────────────────────────────────────────
+librosa>=0.10.1
+numpy>=1.26.0
+
+# ── Training (Phase 3) + Quantization (Phase 4) ──────────────────
+tensorflow>=2.15.0
+tensorflow-model-optimization>=0.8.0
+scikit-learn>=1.4.0
+matplotlib>=3.8.0
+
+# ── Utilities ──────────────────────────────────────────────────────
+tqdm>=4.66.0
