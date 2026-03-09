@@ -181,7 +181,8 @@ STM32_EmbeddedAI/
 │   │   ├── train_config.py                # Training hyperparameters
 │   │   ├── ds_cnn_model.py                # DS-CNN + SE attention + SpecAugment
 │   │   ├── train.py                       # Main training pipeline
-│   │   └── evaluate.py                    # Metrics, confusion matrix
+│   │   ├── evaluate.py                    # Metrics, confusion matrix
+│   │   └── quantize.py                    # QAT fine-tune + TFLite INT8 export
 │   ├── dataset/                           # Generated WAV samples
 │   ├── features/                          # Extracted MFCC arrays (X.npy, y.npy)
 │   └── models/                            # Trained models (.keras, .tflite)
