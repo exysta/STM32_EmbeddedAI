@@ -296,6 +296,30 @@ With only 4 000 synthetic samples, overfitting is a real risk. SpecAugment rando
 
 ---
 
+## Quantization — QAT (Phase 4)
+
+The trained model is float32 (126 KB). The STM32 targets **INT8** inference — 4× smaller, 2–4× faster via CMSIS-NN SIMD optimisation.
+
+### Why QAT instead of post-training quantization?
+
+Post-training quantization (PTQ) naively rounds float32 weights to INT8, which can lose 2–5% accuracy on small models. **Quantization-Aware Training (QAT)** inserts fake-quantization nodes during a short fine-tuning pass (~10 epochs), so the model learns to tolerate INT8 rounding. Research (2024–2025) consistently shows +1–4% accuracy retention over PTQ at no extra inference cost.
+
+### Pipeline
+
+```text
+gragas_dscnn.keras (float32, 126 KB)
+  → QAT fine-tune (10 epochs, LR = 1e-5)
+  → Convert to TFLite INT8 with representative dataset calibration
+  → gragas_dscnn_int8.tflite (~31 KB)
+```
+
+### Handoff to Phase 5
+
+The `.tflite` file is the **bridge between Python and C**. STM32Cube.AI imports it and generates:
+- C arrays for weights, biases, and tensor buffers
+- An inference API (`ai_run()`, `ai_create()`) linked into the firmware
+- Memory layout validated against the STM32H7 RAM/Flash budget
+
 ## Target Benchmarks
 
 | Metric | Target | Measured (PC) |
