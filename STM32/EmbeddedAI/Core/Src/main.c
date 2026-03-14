@@ -142,8 +142,7 @@ int main(void)
 	}
 
 	printf("STM32 audio stream ready\r\n");
-	uint32_t sai_clk = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_SAI1);
-	uint32_t mckdiv = hsai_BlockA1.Init.Mckdiv;
+
 
   /* USER CODE END 2 */
 
