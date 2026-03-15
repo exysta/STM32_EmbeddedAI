@@ -2,11 +2,6 @@
 # 🧠 STM32CubeMX (generated code)
 ############################################
 
-# Ignore generated HAL / CMSIS / Middleware everywhere
-**/Drivers/**
-**/Middlewares/**
-**/Core/Src/**
-**/Core/Inc/**
 
 # Keep ONLY user entry points
 !**/Core/Src/main.c
@@ -69,8 +64,7 @@
 
 # AI Studio workspace
 **/.stm32ai/
-**/network_c_graph.*
-**/network_data.*
+
 
 ############################################
 # 🧪 Python / ML tooling

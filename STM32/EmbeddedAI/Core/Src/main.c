@@ -75,6 +75,8 @@ volatile uint8_t audio_block_ready = 0;
 // + 4-byte sync header prefix
 static uint8_t tx_buf[4 + AUDIO_BLOCK_FRAMES * 3];
 
+// Tick value at which the wakeword LED should be turned off (0 = LED idle)
+static uint32_t led_off_tick = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -202,8 +204,16 @@ int main(void)
 		if (g_mfcc_ready) {
 		    MFCC_Compute();
 		    float p_ww;
-		    if (WW_RunInference(&p_ww))
-		        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0); // wakeword detected
+		    if (WW_RunInference(&p_ww)) {
+		        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);  /* LED on  */
+		        led_off_tick = HAL_GetTick() + 2500U;                /* 2.5 s   */
+		    }
+		}
+
+		/* Turn LED off after timeout — non-blocking, checked every loop */
+		if (led_off_tick != 0U && HAL_GetTick() >= led_off_tick) {
+		    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);    /* LED off */
+		    led_off_tick = 0U;
 		}
 
     /* USER CODE END WHILE */
