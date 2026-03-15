@@ -27,6 +27,10 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
+#include "wakeword_inference.h"
+#include "mfcc_processing.h"
+#include "app_x-cube-ai.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -126,6 +130,10 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
+  // After peripheral inits:
+  STM32CubeAI_Studio_AI_Init();
+  MFCC_Init();
+
 	// Prepopulate the sync header at the start of tx_buf (never changes)
 	tx_buf[0] = 0xAA;
 	tx_buf[1] = 0xBB;
@@ -140,6 +148,8 @@ int main(void)
 	{
 		Error_Handler();
 	}
+
+	// Inside audio_block_ready block:
 
 	printf("STM32 audio stream ready\r\n");
 
@@ -184,9 +194,16 @@ int main(void)
 				p[1] = (uint8_t)((gained >>  8) & 0xFF);
 				p[2] = (uint8_t)((gained >> 16) & 0xFF);
 			}
+			MFCC_IngestBlock(src, AUDIO_BLOCK_FRAMES);
 
 			// Single transmit: header + packed audio
-			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
+			//HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
+		}
+		if (g_mfcc_ready) {
+		    MFCC_Compute();
+		    float p_ww;
+		    if (WW_RunInference(&p_ww))
+		        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0); // wakeword detected
 		}
 
     /* USER CODE END WHILE */
@@ -227,7 +244,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 8;
+  RCC_OscInitStruct.PLL.PLLN = 35;
   RCC_OscInitStruct.PLL.PLLP = 2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   RCC_OscInitStruct.PLL.PLLR = 2;
@@ -252,7 +269,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_6) != HAL_OK)
   {
     Error_Handler();
   }
