@@ -197,7 +197,7 @@ int main(void)
 			MFCC_IngestBlock(src, AUDIO_BLOCK_FRAMES);
 
 			// Single transmit: header + packed audio
-			//HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
+//			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
 		}
 		if (g_mfcc_ready) {
 		    MFCC_Compute();
