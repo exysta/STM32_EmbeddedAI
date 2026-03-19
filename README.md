@@ -12,8 +12,9 @@ This project implements a complete **keyword spotting pipeline** on a resource-c
 - **Synthetic dataset generation** via Microsoft Neural TTS with multi-voice, multi-prosody augmentation
 - **Audio acquisition** via an INMP441 MEMS microphone over SAI peripheral (I2S format)
 - **Feature extraction** using MFCC (Mel-Frequency Cepstral Coefficients)
-- **Neural network inference** with a quantized DS-CNN model
+- **Neural network inference** with a quantized DS-CNN model (INT8)
 - **Bare-metal deployment** on an STM32H7A3ZIQ (Cortex-M7, 280 MHz)
+- **PC validation tool** for real-time microphone testing of the same pipeline
 
 ---
 
@@ -32,13 +33,12 @@ This project implements a complete **keyword spotting pipeline** on a resource-c
 ## Project Status
 
 ```
-[✅] Hardware bring-up        — SAI + INMP441 acquisition validated via UART → WAV
-[✅] Dataset generation       — 2000 wakeword + 2000 negative synthetic samples
-[✅] Feature extraction       — MFCC (97×40) with per-feature normalisation
-[✅] Model training           — DS-CNN + SE: 98.7% accuracy, 32K params, 31 KB INT8
-[🔄] INT8 quantization        — QAT via TFLite (next)
-[⬜] STM32Cube.AI deployment  — C inference code generation + firmware integration (planned)
-[⬜] Benchmarking             — Inference time, RAM/Flash profiling on target (planned)
+[✅] Phase 1 — Hardware bring-up        SAI + INMP441 acquisition validated via UART → WAV
+[✅] Phase 2 — Feature extraction       MFCC (97×40) with per-feature normalisation
+[✅] Phase 3 — Model training           DS-CNN + SE: 98.7% accuracy, 32K params
+[✅] Phase 4 — INT8 quantization        Full-integer PTQ → 71 KB .tflite
+[✅] Phase 5 — STM32 deployment         MFCC + inference running on-device in real time
+[🔄] Phase 6 — Benchmarking            Inference latency / RAM / Flash profiling (in progress)
 ```
 
 ---
@@ -63,11 +63,13 @@ This project implements a complete **keyword spotting pipeline** on a resource-c
 ┌─────────────────────────────────────────▼────────────────────────┐
 │                       STM32H7A3ZIQ (Target)                      │
 │                                                                  │
-│  INMP441 ──SAI(I2S)──► Circular buffer ──► MFCC ──► Inference   │
-│                                                        │         │
-│                                Confidence threshold + debounce   │
-│                                                        │         │
-│                                                Wake word event   │
+│  INMP441 ──SAI(I2S)──► Ring buffer ──► MFCC ──► INT8 quant      │
+│                                                     │            │
+│                                          ST-AI inference (DS-CNN) │
+│                                                     │            │
+│                                 Threshold (70%) + 1.5 s cooldown │
+│                                                     │            │
+│                                       LED + UART wake word event │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -160,100 +162,7 @@ Output: (97, 40) matrix per sample — 3.9 KB in INT8
 | FFT size | 1024 | Power-of-2 ≥ window length (640). Zero-pads each frame for finer frequency resolution via CMSIS-DSP `arm_rfft_f32`. |
 | Normalization | Per-feature global (z-score) | Cheapest at inference (40 sub + 40 mul per frame, ≈ 28 µs). Preserves absolute energy — important for silence/noise rejection. Only 320 B of Flash for the stored μ/σ arrays. |
 
-> **On-device parity:** The same pipeline parameters will be reimplemented in C using CMSIS-DSP on the STM32. `librosa` is used during training only; the parameter set documented here is the single source of truth for both sides.
-
----
-
-## Repository Structure
-
-```
-STM32_EmbeddedAI/
-│
-├── Python/
-│   ├── DatasetGeneration/
-│   │   └── generate_wakeword_dataset.py   # TTS + augmentation pipeline (edge-tts)
-│   ├── PythonMicBridge/
-│   │   └── MicBridgeCOM.py                # UART → WAV bridge for hardware validation
-│   ├── Preprocessing/
-│   │   ├── mfcc_config.py                 # MFCC hyperparameters (single source of truth)
-│   │   └── extract_mfcc.py                # WAV → MFCC → .npy extraction pipeline
-│   ├── Training/
-│   │   ├── train_config.py                # Training hyperparameters
-│   │   ├── ds_cnn_model.py                # DS-CNN + SE attention + SpecAugment
-│   │   ├── train.py                       # Main training pipeline
-│   │   ├── evaluate.py                    # Metrics, confusion matrix
-│   │   └── quantize.py                    # QAT fine-tune + TFLite INT8 export
-│   ├── dataset/                           # Generated WAV samples
-│   ├── features/                          # Extracted MFCC arrays (X.npy, y.npy)
-│   └── models/                            # Trained models (.keras, .tflite)
-│
-└── STM32/
-    └── EmbeddedAI/
-        ├── Core/                  # Main loop, SAI driver, audio buffer
-        ├── AI/                    # Cube.AI generated inference code [planned]
-        └── Drivers/               # HAL, SAI, INMP441 driver
-```
-
----
-
-## Roadmap
-
-### Phase 1 — Hardware & Dataset ✅
-
-- [x] SAI + INMP441 I2S acquisition working and validated
-- [x] UART → WAV pipeline for acoustic validation on PC
-- [x] Synthetic dataset: 2000 wakeword + 2000 negative samples
-- [x] Multi-voice, multi-prosody augmentation pipeline
-
-### Phase 2 — Feature Extraction ✅
-
-- [x] MFCC parameter selection and justification documented
-- [x] MFCC extraction (40 coefficients, 97 time frames, 1-second window)
-- [x] Export `X.npy` / `y.npy` / `norm_stats.npz` for training
-
-### Phase 3 — Model Training ✅
-
-- [x] DS-CNN architecture with SE attention block (32 194 params)
-- [x] 2-class classification: `wakeword` / `negative`
-- [x] SpecAugment (time + frequency masking) for regularisation
-- [x] Train/val/test split (70/15/15) with stratification
-- [x] **Test accuracy: 98.7%** — precision 0.99, recall 0.98, FPR 1.0%
-- [x] Model size: 125.8 KB float32 / ~31 KB INT8 (target was < 200 KB)
-
-### Phase 4 — Quantization & Export
-
-- [ ] Quantization-Aware Training (QAT) via `tensorflow-model-optimization`
-- [ ] Accuracy comparison: float32 vs QAT-INT8
-- [ ] `.tflite` export for STM32Cube.AI
-
-### Phase 5 — STM32 Deployment
-
-- [ ] STM32Cube.AI model import and memory validation
-- [ ] Integrate inference C code into firmware
-- [ ] 1-second sliding window with 50% overlap on SAI circular buffer
-- [ ] Confidence threshold (> 85%) + 500 ms detection debounce
-
-### Phase 6 — Benchmarking
-
-- [ ] Inference latency via DWT cycle counter (Cortex-M7)
-- [ ] RAM and Flash usage profiling
-- [ ] On-device accuracy vs PC baseline
-- [ ] False positive rate characterization (target: < 1 / min)
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Dataset generation | Python, edge-tts (Microsoft Neural TTS), audiomentations |
-| Audio features | MFCC — librosa (training) / C implementation (inference) |
-| Model architecture | DS-CNN + SE attention (Depthwise Separable CNN) |
-| Training framework | TensorFlow / Keras |
-| Quantization | Quantization-Aware Training (QAT) → TFLite INT8 |
-| Deployment tool | STM32Cube.AI (X-CUBE-AI) |
-| Firmware | C, ARM Cortex-M7, STM32 HAL |
-| Toolchain | STM32CubeIDE, GCC ARM Embedded |
+> **On-device parity:** The same pipeline parameters are reimplemented in C using CMSIS-DSP on the STM32. `librosa` is used during training only; the parameter set documented here is the single source of truth for both sides.
 
 ---
 
@@ -280,7 +189,7 @@ Input (97, 40, 1)                     ← MFCC "image": 97 time frames × 40 coe
   ├─ Dropout (0.4)                    ← regularisation
   └─ Dense(2, softmax)                ← [P(negative), P(wakeword)]
 
-Estimated: ~28K params · ~28 KB INT8 · inference < 10 ms on Cortex-M7 @ 280 MHz
+Estimated: ~32K params · ~71 KB INT8 .tflite
 ```
 
 ### Why Depthwise Separable Convolutions?
@@ -297,29 +206,177 @@ With only 4 000 synthetic samples, overfitting is a real risk. SpecAugment rando
 
 ---
 
-## Quantization — QAT (Phase 4)
+## Quantization — INT8 (Phase 4)
 
 The trained model is float32 (126 KB). The STM32 targets **INT8** inference — 4× smaller, 2–4× faster via CMSIS-NN SIMD optimisation.
 
-### Why QAT instead of post-training quantization?
+### Why PTQ instead of QAT?
 
-Post-training quantization (PTQ) naively rounds float32 weights to INT8, which can lose 2–5% accuracy on small models. **Quantization-Aware Training (QAT)** inserts fake-quantization nodes during a short fine-tuning pass (~10 epochs), so the model learns to tolerate INT8 rounding. Research (2024–2025) consistently shows +1–4% accuracy retention over PTQ at no extra inference cost.
+Quantization-Aware Training (QAT) via `tensorflow-model-optimization` is incompatible with Keras 3 (TF 2.16+). Full-integer **Post-Training Quantization (PTQ)** with representative dataset calibration achieves near-identical accuracy for models of this size and was used instead.
 
 ### Pipeline
 
 ```text
 gragas_dscnn.keras (float32, 126 KB)
-  → QAT fine-tune (10 epochs, LR = 1e-5)
-  → Convert to TFLite INT8 with representative dataset calibration
-  → gragas_dscnn_int8.tflite (~31 KB)
+  → Full-integer PTQ with representative dataset calibration (200 samples)
+  → All tensors quantized to INT8 (weights + activations)
+  → gragas_dscnn_int8.tflite (71 KB)
 ```
 
 ### Handoff to Phase 5
 
 The `.tflite` file is the **bridge between Python and C**. STM32Cube.AI imports it and generates:
-- C arrays for weights, biases, and tensor buffers
-- An inference API (`ai_run()`, `ai_create()`) linked into the firmware
+- C arrays for weights, biases, and tensor buffers (`network.c`, `network_data.c`)
+- An inference API linked into the firmware
 - Memory layout validated against the STM32H7 RAM/Flash budget
+
+---
+
+## STM32 Firmware (Phase 5)
+
+The firmware implements real-time wake word detection on the Cortex-M7:
+
+### On-device pipeline
+
+```
+SAI DMA (circular, 16 kHz, 256 frames per half-transfer)
+  │
+  ├─ HAL_SAI_RxHalfCpltCallback / RxCpltCallback
+  │    → Extract left channel from stereo DMA buffer
+  │    → Apply gain (×10) + 24-bit clamp
+  │    → MFCC_IngestBlock():  accumulate into 1-sec ring buffer (16 000 samples)
+  │
+  ├─ When 1 second accumulated (g_mfcc_ready == 1):
+  │    → MFCC_Compute(): pre-emph → Hann → FFT → Mel → log → DCT  (CMSIS-DSP)
+  │    → WW_Quantise(): normalize (μ/σ) → float32 → INT8 affine quantisation
+  │    → aiRunInference(): ST-AI synchronous forward pass
+  │    → If P(wakeword) ≥ 0.70 AND cooldown expired (1.5 s) → TRIGGER
+  │
+  └─ On trigger: UART print + LED on for 2.5 s
+```
+
+### Key firmware modules
+
+| File | Role |
+|---|---|
+| `Core/Src/main.c` | Main loop: DMA callbacks, MFCC trigger, inference dispatch, LED control |
+| `Core/Src/mfcc_processing.c` | Full MFCC pipeline in C using CMSIS-DSP (`arm_rfft_fast_f32`) |
+| `Core/Src/wakeword_inference.c` | Normalisation, INT8 quantisation, ST-AI inference glue, threshold + cooldown |
+| `Core/Inc/norm_stats.h` | Per-coefficient mean/std arrays exported from Python (`norm_stats.npz`) |
+| `Core/Src/network.c` | ST-AI generated model weights and graph (from `.tflite`) |
+| `Core/Src/network_data.c` | ST-AI generated tensor data |
+
+---
+
+## Repository Structure
+
+```
+STM32_EmbeddedAI/
+│
+├── Python/
+│   ├── DatasetGeneration/
+│   │   └── generate_wakeword_dataset.py   # TTS + augmentation pipeline (edge-tts)
+│   ├── PythonMicBridge/
+│   │   └── MicBridgeCOM.py                # UART → WAV bridge for hardware validation
+│   ├── Preprocessing/
+│   │   ├── mfcc_config.py                 # MFCC hyperparameters (single source of truth)
+│   │   └── extract_mfcc.py                # WAV → MFCC → .npy extraction pipeline
+│   ├── Training/
+│   │   ├── train_config.py                # Training hyperparameters
+│   │   ├── ds_cnn_model.py                # DS-CNN + SE attention + SpecAugment
+│   │   ├── train.py                       # Main training pipeline
+│   │   ├── evaluate.py                    # Metrics, confusion matrix
+│   │   └── quantize.py                    # PTQ INT8 quantization + TFLite export
+│   ├── Testing/
+│   │   └── pc_wakeword_test.py            # Real-time PC mic test (mirrors STM32 pipeline)
+│   ├── export_norm_stats.py               # norm_stats.npz → C header generator
+│   ├── dataset/                           # Generated WAV samples
+│   ├── features/                          # Extracted MFCC arrays (X.npy, y.npy)
+│   └── models/                            # Trained models (.keras, .tflite)
+│
+└── STM32/
+    └── EmbeddedAI/
+        ├── Core/
+        │   ├── Src/
+        │   │   ├── main.c                 # Main loop, SAI DMA, inference dispatch
+        │   │   ├── mfcc_processing.c      # MFCC pipeline (CMSIS-DSP)
+        │   │   ├── wakeword_inference.c   # Quantise + infer + threshold + cooldown
+        │   │   ├── network.c              # ST-AI generated model graph
+        │   │   └── network_data.c         # ST-AI generated weights
+        │   └── Inc/
+        │       ├── mfcc_processing.h      # MFCC public API
+        │       ├── wakeword_inference.h   # Inference public API
+        │       ├── norm_stats.h           # Mean/std arrays (from Python)
+        │       ├── network.h              # ST-AI generated header
+        │       └── network_details.h      # ST-AI model metadata
+        └── Drivers/                       # HAL, SAI, INMP441 driver
+```
+
+---
+
+## Roadmap
+
+### Phase 1 — Hardware & Dataset ✅
+
+- [x] SAI + INMP441 I2S acquisition working and validated
+- [x] UART → WAV pipeline for acoustic validation on PC
+- [x] Synthetic dataset: 2000 wakeword + 2000 negative samples
+- [x] Multi-voice, multi-prosody augmentation pipeline
+
+### Phase 2 — Feature Extraction ✅
+
+- [x] MFCC parameter selection and justification documented
+- [x] MFCC extraction (40 coefficients, 97 time frames, 1-second window)
+- [x] Export `X.npy` / `y.npy` / `norm_stats.npz` for training
+
+### Phase 3 — Model Training ✅
+
+- [x] DS-CNN architecture with SE attention block (32 194 params)
+- [x] 2-class classification: `wakeword` / `negative`
+- [x] SpecAugment (time + frequency masking) for regularisation
+- [x] Train/val/test split (70/15/15) with stratification
+- [x] **Test accuracy: 98.7%** — precision 0.99, recall 0.98, FPR 1.0%
+- [x] Model size: 125.8 KB float32
+
+### Phase 4 — Quantization & Export ✅
+
+- [x] Full-integer PTQ with representative dataset calibration
+- [x] INT8 model: `gragas_dscnn_int8.tflite` (71 KB)
+- [x] PC real-time test script (`pc_wakeword_test.py`) — validates TFLite model on live microphone
+
+### Phase 5 — STM32 Deployment ✅
+
+- [x] STM32Cube.AI model import and C code generation (`network.c/h`)
+- [x] MFCC pipeline reimplemented in C with CMSIS-DSP (`mfcc_processing.c`)
+- [x] Normalisation + INT8 quantisation + inference glue (`wakeword_inference.c`)
+- [x] `norm_stats.h` exported from Python (`export_norm_stats.py`)
+- [x] 1-second accumulation buffer on SAI circular DMA
+- [x] Confidence threshold (≥ 70%) + 1.5 s detection cooldown
+- [x] LED feedback (2.5 s on trigger) + UART debug output
+
+### Phase 6 — Benchmarking
+
+- [ ] Inference latency via DWT cycle counter (Cortex-M7)
+- [ ] RAM and Flash usage profiling
+- [ ] On-device accuracy vs PC baseline
+- [ ] False positive rate characterization (target: < 1 / min)
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Dataset generation | Python, edge-tts (Microsoft Neural TTS), audiomentations |
+| Audio features | MFCC — librosa (training) / CMSIS-DSP C implementation (inference) |
+| Model architecture | DS-CNN + SE attention (Depthwise Separable CNN) |
+| Training framework | TensorFlow / Keras |
+| Quantization | Full-integer PTQ → TFLite INT8 |
+| Deployment tool | STM32Cube.AI (X-CUBE-AI) |
+| Firmware | C, ARM Cortex-M7, STM32 HAL, CMSIS-DSP |
+| Toolchain | STM32CubeIDE, GCC ARM Embedded |
+
+---
 
 ## Target Benchmarks
 
@@ -327,7 +384,7 @@ The `.tflite` file is the **bridge between Python and C**. STM32Cube.AI imports 
 |---|---|---|
 | Inference latency | < 50 ms | *pending (on-device)* |
 | RAM footprint | < 512 KB | *pending (on-device)* |
-| Flash (model + firmware) | < 1.5 MB | ~31 KB INT8 model |
+| Flash (model + firmware) | < 1.5 MB | 71 KB INT8 model |
 | Test set accuracy | > 90 % | **98.7 %** |
 | False positive rate | < 1 per minute | 1.0 % on test set |
 
@@ -342,6 +399,7 @@ The `.tflite` file is the **bridge between Python and C**. STM32Cube.AI imports 
 ```bash
 pip install tensorflow librosa numpy scikit-learn matplotlib
 pip install edge-tts pydub audiomentations soundfile tqdm
+pip install sounddevice scipy          # for PC mic testing
 # ffmpeg required: https://ffmpeg.org/download.html
 ```
 
@@ -350,9 +408,9 @@ STM32CubeIDE + X-CUBE-AI extension pack required for firmware.
 ### Generate dataset
 
 ```bash
-cd Python/
-python generate_dataset.py
-# Output: ./dataset/wakeword/  and  ./dataset/negative/
+cd Python/DatasetGeneration
+python generate_wakeword_dataset.py
+# Output: ../dataset/wakeword/  and  ../dataset/negative/
 # Runtime: ~15-25 min
 ```
 
@@ -372,6 +430,30 @@ python train.py
 # Output: ../models/gragas_dscnn.keras
 # Evaluate: python evaluate.py
 ```
+
+### Quantize to INT8
+
+```bash
+cd Python/Training
+python quantize.py
+# Output: ../models/gragas_dscnn_int8.tflite
+```
+
+### Test on PC microphone
+
+```bash
+cd Python/Testing
+python pc_wakeword_test.py
+# Streams your microphone, prints P(wakeword) for each 1-sec sliding window
+# Press Ctrl+C to quit
+```
+
+### Deploy to STM32
+
+1. Import `gragas_dscnn_int8.tflite` into STM32Cube.AI Studio
+2. Generate C model files → copy to `STM32/EmbeddedAI/Core/Src/`
+3. Build and flash via STM32CubeIDE
+4. Speak "Gragas" into the INMP441 — green LED lights up on detection
 
 ---
 

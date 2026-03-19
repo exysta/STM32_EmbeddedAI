@@ -14,21 +14,18 @@ DURATION_S      = 1               # seconds per clip
 NUM_SAMPLES     = SAMPLE_RATE * DURATION_S   # 16 000
 
 # ── Pre-emphasis ───────────────────────────────────────────────────
-# y[n] = x[n] - coeff * x[n-1]
-# Boosts high frequencies to compensate for spectral tilt of speech.
-# Set to 0.0 to disable.
 PRE_EMPHASIS    = 0.97
 
 # ── MFCC parameters ───────────────────────────────────────────────
-N_MFCC          = 40              # cepstral coefficients to keep
-N_MELS          = 40              # Mel filter banks
-N_FFT           = 1024            # FFT size (must be ≥ WIN_LENGTH, power of 2 for CMSIS arm_rfft_f32)
-WIN_LENGTH      = 640             # window in samples  (40 ms)
-HOP_LENGTH      = 160             # hop    in samples  (10 ms)
-FMIN            = 20.0            # Hz  — lower edge of first Mel filter
-FMAX            = 8000.0          # Hz  — upper edge (= Nyquist at 16 kHz)
-WINDOW          = "hann"          # window function
-CENTER          = False           # no zero-padding — matches on-device behaviour
+N_MFCC          = 40
+N_MELS          = 40
+N_FFT           = 1024
+WIN_LENGTH      = 640             # 40 ms
+HOP_LENGTH      = 160             # 10 ms
+FMIN            = 20.0
+FMAX            = 8000.0
+WINDOW          = "hann"
+CENTER          = False
 
 # ── Derived geometry ───────────────────────────────────────────────
 NUM_FRAMES      = 1 + (NUM_SAMPLES - WIN_LENGTH) // HOP_LENGTH   # 97
@@ -37,9 +34,28 @@ FEATURE_SHAPE   = (NUM_FRAMES, N_MFCC)                           # (97, 40)
 # ── Paths (relative to Python/) ────────────────────────────────────
 _PYTHON_DIR     = Path(__file__).resolve().parent.parent
 DATASET_DIR     = _PYTHON_DIR / "dataset"
-WAKEWORD_DIR    = DATASET_DIR / "wakeword" / "augmented"
-NEGATIVE_DIR    = DATASET_DIR / "negative"
 FEATURES_DIR    = _PYTHON_DIR / "features"
+
+# ── Manifest (produced by generate_wakeword_dataset.py) ───────────
+# extract_mfcc.py reads this to discover all WAV files + weights.
+# If it does not exist, extract_mfcc.py falls back to directory scan.
+MANIFEST_PATH   = DATASET_DIR / "dataset_manifest.csv"
+
+# ── Fallback directory scan (used when no manifest exists) ─────────
+# Points to the augmented real recordings + TTS subdirectories.
+# When running with manifest these are ignored.
+WAKEWORD_DIRS   = [
+    DATASET_DIR / "wakeword" / "augmented",   # real recordings (primary)
+    DATASET_DIR / "wakeword" / "tts",         # TTS diversity (supporting)
+]
+NEGATIVE_DIRS   = [
+    DATASET_DIR / "negative" / "augmented",
+    DATASET_DIR / "negative" / "tts",
+]
+
+# Legacy single-dir names kept for backward compatibility with evaluate.py
+WAKEWORD_DIR    = DATASET_DIR / "wakeword" / "augmented"
+NEGATIVE_DIR    = DATASET_DIR / "negative" / "augmented"
 
 # ── Labels ─────────────────────────────────────────────────────────
 LABEL_NEGATIVE  = 0

@@ -67,7 +67,7 @@
  *   - Cooldown in WW_RunInference prevents false double-triggers
  *   - INMP441 signal path introduces mild distribution shift vs training data
  * If false triggers appear on background speech, raise back toward 0.80.    */
-#define WW_THRESHOLD    0.70f
+#define WW_THRESHOLD    0.80f
 
 /* ── Internal INT8 input buffer ──────────────────────────────────────────
  *  Sized to hold one full MFCC feature map: 40 coefs × 97 frames = 3880  */
@@ -200,6 +200,8 @@ int WW_RunInference(float *p_wakeword)
         s_last_detection_tick = now;
         printf("[WW]   *** WAKEWORD DETECTED ***  p_ww=%.4f\r\n", p_ww);
     }
+
+    printf("------------------------------------------------------\r\n");
 
     return detected;
 }

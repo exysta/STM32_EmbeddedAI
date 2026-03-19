@@ -34,6 +34,31 @@
 static uint32_t s_ingest_call_count  = 0U;   /* total calls to IngestBlock   */
 static uint32_t s_compute_call_count = 0U;   /* total calls to MFCC_Compute  */
 
+/* ── Energy gate ─────────────────────────────────────────────────────────── *
+ *
+ * Problem: the model confidently misclassifies sustained ambient noise
+ * (e.g. PC fans) as the wakeword because the training data contains only
+ * synthetic silence / Gaussian noise — not real-world broadband noise.
+ *
+ * Fix: track a slowly-adapting noise floor (exponential moving average of
+ * RMS).  Only proceed to MFCC frame computation + inference when the
+ * current window's RMS exceeds the noise floor by ENERGY_GATE_FACTOR.
+ * A spoken word causes a distinct RMS spike above the flat noise floor.
+ *
+ * Tuning:
+ *   ENERGY_GATE_ALPHA  — lower = slower adaptation (more stable floor)
+ *   ENERGY_GATE_FACTOR — higher = less sensitive (fewer false positives)
+ * ──────────────────────────────────────────────────────────────────────── */
+#define ENERGY_GATE_ALPHA   0.05f    /* EMA smoothing: floor ← α·rms + (1-α)·floor */
+#define ENERGY_GATE_FACTOR  3.0f     /* require rms > factor × noise_floor           */
+#define ENERGY_GATE_INIT    0.0f     /* initial floor (0 = learn from first window)  */
+#define ENERGY_MIN_RMS  0.008f    // below this, skip inference regardless of gate factor
+
+static float32_t s_noise_floor    = ENERGY_GATE_INIT;  /* running EMA of RMS      */
+static uint8_t   s_floor_primed   = 0U;                /* 0 until first RMS seen  */
+
+volatile uint8_t g_energy_gate_passed = 0U;             /* 1 = speech likely       */
+
 /* ── Parameters (must stay in sync with mfcc_config.py) ──────────────────── */
 
 #define SAMPLE_RATE      16000U   /* Hz — matches INMP441 / SAI config        */
@@ -74,7 +99,7 @@ static uint32_t s_compute_call_count = 0U;   /* total calls to MFCC_Compute  */
  *   window 3 : t=0.50 … 1.50 s   ← also detected → cooldown suppresses
  */
 #define AUDIO_BUF_LEN        SAMPLE_RATE   /* 16 000 samples = 1 second      */
-#define SLIDE_HOP_SAMPLES    4000U         /* 250 ms hop — 4 windows/second  */
+#define SLIDE_HOP_SAMPLES    2000U         /* 250 ms hop — 4 windows/second  */
 
 static int32_t   s_ring_buf[AUDIO_BUF_LEN]; /* circular audio buffer         */
 static uint32_t  s_ring_write_idx      = 0U; /* next write slot (mod BUF_LEN) */
@@ -255,7 +280,7 @@ void MFCC_IngestBlock(const int32_t *src, uint32_t num_frames)
     {
         int32_t raw    = src[i * 2U];   /* left channel */
         int32_t s24    = raw >> 8;
-        int32_t gained = s24 * 70;      /* target RMS 0.10-0.15 when speaking
+        int32_t gained = s24 * 10;      /* target RMS 0.10-0.15 when speaking
                                            increase if RMS < 0.08 when speaking
                                            decrease if RMS > 0.20 (clipping)  */
         if (gained >  8388607)  gained =  8388607;
@@ -336,6 +361,41 @@ void MFCC_Compute(void)
     printf("[MFCC] Audio RMS after preemph = %.5f  "
            "(expect >0.01 when speaking)\r\n", rms);
 
+    /* ── Energy gate: update noise floor and check for speech ────────────── */
+    if (!s_floor_primed && s_ring_fill_count >= AUDIO_BUF_LEN)
+    {
+        s_noise_floor  = rms;
+        s_floor_primed = 1U;
+    }
+
+    float32_t gate_threshold = s_noise_floor * ENERGY_GATE_FACTOR;
+    uint8_t   gate_open = (rms > gate_threshold) && (rms > ENERGY_MIN_RMS);
+
+    printf("[GATE] noise_floor=%.5f  threshold=%.5f  rms=%.5f  %s\r\n",
+           s_noise_floor, gate_threshold, rms,
+           gate_open ? "OPEN (speech?)" : "CLOSED (ambient)");
+
+    /* Update the noise floor — only from quiet windows to avoid
+     * speech pushing the floor up.  If the gate is open (speech),
+     * we freeze the floor so it stays calibrated to the ambient level. */
+    if (!gate_open)
+    {
+        s_noise_floor = ENERGY_GATE_ALPHA * rms
+                      + (1.0f - ENERGY_GATE_ALPHA) * s_noise_floor;
+    }
+
+    if (!gate_open)
+    {
+        /* No speech detected — skip the expensive MFCC frame loop and
+         * signal main.c to skip inference for this window.              */
+        g_energy_gate_passed = 0U;
+        s_samples_since_infer = 0U;
+        g_mfcc_ready          = 0U;
+        return;
+    }
+
+    g_energy_gate_passed = 1U;
+
     for (uint32_t frame_idx = 0U; frame_idx < NUM_FRAMES; frame_idx++)
     {
         const float32_t *frame_start = &s_float_buf[HOP_LEN * frame_idx];
@@ -348,21 +408,33 @@ void MFCC_Compute(void)
 
         MfccColumn(&S_Mfcc, pInFrame, pOutColBuffer);
 
+        // Match librosa's power_to_db amin floor: 10*log10(1e-10) = -100 dB
+        // MFCC coef[0] for all-floor Mel = sqrt(1/N_MELS) * (-100 * N_MELS) ≈ -632
+        // A practical per-coef floor that covers this:
         for (uint32_t coef = 0U; coef < NUM_MFCC; coef++)
         {
+            if (pOutColBuffer[coef] < -320.0f)
+                pOutColBuffer[coef] = -320.0f;   // matches librosa's effective MFCC floor
             g_mfcc_out[coef * NUM_FRAMES + frame_idx] = pOutColBuffer[coef];
         }
+
     }
 
     /* ── CHECKPOINT 4c: first 5 raw MFCC values (coef 0, frames 0-4) ───── *
+     *
      * Compare against Python: print(mfcc_raw[0:5, 0]) on a saved .npy      */
-    printf("[MFCC] Raw MFCC coef[0] frames[0..4]: "
-           "%.2f  %.2f  %.2f  %.2f  %.2f\r\n",
-           g_mfcc_out[0 * NUM_FRAMES + 0],
-           g_mfcc_out[0 * NUM_FRAMES + 1],
-           g_mfcc_out[0 * NUM_FRAMES + 2],
-           g_mfcc_out[0 * NUM_FRAMES + 3],
-           g_mfcc_out[0 * NUM_FRAMES + 4]);
+
+    // Full coef[0] dump — compare line-by-line to Python output below
+    printf("[DUMP_C0]");
+    for (uint32_t f = 0; f < NUM_FRAMES; f++)
+        printf(" %.1f", g_mfcc_out[0 * NUM_FRAMES + f]);
+    printf("\r\n");
+
+    // All 40 coefs at frame 48 (middle of window — most likely to contain speech)
+    printf("[DUMP_F48]");
+    for (uint32_t c = 0; c < NUM_MFCC; c++)
+        printf(" %.2f", g_mfcc_out[c * NUM_FRAMES + 48]);
+    printf("\r\n");
     printf("[MFCC] Expected from Python norm_stats: mean[0]=%.2f  std[0]=%.2f\r\n",
            mfcc_mean[0], mfcc_std[0]);
 

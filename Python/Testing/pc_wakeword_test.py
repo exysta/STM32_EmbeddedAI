@@ -86,9 +86,10 @@ CENTER      = False
 NUM_FRAMES  = 1 + (NUM_SAMPLES - WIN_LENGTH) // HOP_LENGTH   # 97
 
 # ── Quantisation (from Cube.AI report, line 22) ───────────────────────────
-INPUT_SCALE = 0.081563368
-INPUT_ZP    = -10
-OUTPUT_SCALE = 0.003906250
+# After (new model values — read directly from the warning output):
+INPUT_SCALE  = 0.05794549733400345
+INPUT_ZP     = 9
+OUTPUT_SCALE = 0.003906
 OUTPUT_ZP    = -128
 
 # ── Detection threshold ────────────────────────────────────────────────────
@@ -320,6 +321,7 @@ def main():
                 # Full pipeline
                 audio_preemph = audio_raw
                 mfcc_raw      = compute_mfcc(audio_raw)
+                
                 mfcc_norm     = normalize(mfcc_raw, mean, std)
                 mfcc_int8     = quantize(mfcc_norm)
                 probs         = run_inference(interp, input_index, mfcc_int8)

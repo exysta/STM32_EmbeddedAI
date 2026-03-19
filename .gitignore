@@ -112,9 +112,21 @@ desktop.ini
 ############################################
 # Dataset
 ############################################
-**/dataset
+# Feature arrays
+Python/features/X.npy
+Python/features/y.npy
+Python/features/weights.npy
+Python/features/norm_stats.npz
+Python/Testing/debug_wav/
+Python/dataset/
 
 ############################################
 # Python venv
 ############################################
 **/.venv
+
+
+############################################
+# WAV files
+############################################ 
+*.wav

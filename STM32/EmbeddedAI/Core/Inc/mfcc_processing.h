@@ -65,6 +65,13 @@ extern "C" {
 extern volatile uint8_t g_mfcc_ready;
 
 /**
+ * Set to 1 by MFCC_Compute() when the energy gate passes (RMS spikes above
+ * the ambient noise floor), indicating likely speech.
+ * When 0, the current window was pure ambient noise — skip inference.
+ */
+extern volatile uint8_t g_energy_gate_passed;
+
+/**
  * MFCC output buffer.
  * Valid only after g_mfcc_ready was 1 and MFCC_Compute() has returned.
  *
