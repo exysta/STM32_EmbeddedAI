@@ -99,7 +99,7 @@ volatile uint8_t g_energy_gate_passed = 0U;             /* 1 = speech likely    
  *   window 3 : t=0.50 … 1.50 s   ← also detected → cooldown suppresses
  */
 #define AUDIO_BUF_LEN        SAMPLE_RATE   /* 16 000 samples = 1 second      */
-#define SLIDE_HOP_SAMPLES    2000U         /* 250 ms hop — 4 windows/second  */
+#define SLIDE_HOP_SAMPLES    4000U         /* 250 ms hop — 4 windows/second  */
 
 static int32_t   s_ring_buf[AUDIO_BUF_LEN]; /* circular audio buffer         */
 static uint32_t  s_ring_write_idx      = 0U; /* next write slot (mod BUF_LEN) */

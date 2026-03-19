@@ -196,30 +196,30 @@ int main(void)
 				p[1] = (uint8_t)((gained >>  8) & 0xFF);
 				p[2] = (uint8_t)((gained >> 16) & 0xFF);
 			}
-//			MFCC_IngestBlock(src, AUDIO_BLOCK_FRAMES);x
+			MFCC_IngestBlock(src, AUDIO_BLOCK_FRAMES);
 
 			// Single transmit: header + packed audio
-			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
+//			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
 		}
-//		if (g_mfcc_ready) {
-//		    MFCC_Compute();
-//
-//		    /* Only run the (expensive) neural-net inference when the energy
-//		     * gate determined that speech-like energy is present.            */
-//		    if (g_energy_gate_passed) {
-//		        float p_ww;
-//		        if (WW_RunInference(&p_ww)) {
-//		            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);  /* LED on  */
-//		            led_off_tick = HAL_GetTick() + 2500U;                /* 2.5 s   */
-//		        }
-//		    }
-//		}
-//
-//		/* Turn LED off after timeout — non-blocking, checked every loop */
-//		if (led_off_tick != 0U && HAL_GetTick() >= led_off_tick) {
-//		    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);    /* LED off */
-//		    led_off_tick = 0U;
-//		}
+		if (g_mfcc_ready) {
+		    MFCC_Compute();
+
+		    /* Only run the (expensive) neural-net inference when the energy
+		     * gate determined that speech-like energy is present.            */
+		    if (g_energy_gate_passed) {
+		        float p_ww;
+		        if (WW_RunInference(&p_ww)) {
+		            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);  /* LED on  */
+		            led_off_tick = HAL_GetTick() + 2500U;                /* 2.5 s   */
+		        }
+		    }
+		}
+
+		/* Turn LED off after timeout — non-blocking, checked every loop */
+		if (led_off_tick != 0U && HAL_GetTick() >= led_off_tick) {
+		    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);    /* LED off */
+		    led_off_tick = 0U;
+		}
 
     /* USER CODE END WHILE */
 
