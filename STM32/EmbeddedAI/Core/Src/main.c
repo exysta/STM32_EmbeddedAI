@@ -196,7 +196,7 @@ int main(void)
 				p[1] = (uint8_t)((gained >>  8) & 0xFF);
 				p[2] = (uint8_t)((gained >> 16) & 0xFF);
 			}
-//			MFCC_IngestBlock(src, AUDIO_BLOCK_FRAMES);
+//			MFCC_IngestBlock(src, AUDIO_BLOCK_FRAMES);x
 
 			// Single transmit: header + packed audio
 			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
