@@ -49,7 +49,7 @@ static uint32_t s_compute_call_count = 0U;   /* total calls to MFCC_Compute  */
  *   ENERGY_GATE_ALPHA  — lower = slower adaptation (more stable floor)
  *   ENERGY_GATE_FACTOR — higher = less sensitive (fewer false positives)
  * ──────────────────────────────────────────────────────────────────────── */
-#define ENERGY_GATE_ALPHA   0.05f    /* EMA smoothing: floor ← α·rms + (1-α)·floor */
+#define ENERGY_GATE_ALPHA   0.02f    /* EMA smoothing: floor ← α·rms + (1-α)·floor */
 #define ENERGY_GATE_FACTOR  3.0f     /* require rms > factor × noise_floor           */
 #define ENERGY_GATE_INIT    0.0f     /* initial floor (0 = learn from first window)  */
 #define ENERGY_MIN_RMS  0.008f    // below this, skip inference regardless of gate factor
@@ -249,15 +249,23 @@ void MFCC_IngestBlock(const int32_t *src, uint32_t num_frames)
 {
     s_ingest_call_count++;
 
+    /* Invalidate cache for this DMA half-buffer BEFORE reading it.
+     * Size = num_frames stereo pairs × 2 channels × 4 bytes each.
+     * Address must be 32-byte aligned for SCB_InvalidateDCache_by_Addr. */
+    SCB_InvalidateDCache_by_Addr(
+        (uint32_t *)src,
+        num_frames * 2 * sizeof(int32_t)
+    );
+
     /* ── CHECKPOINT 1: print every 64 calls (~1 s) ──────────────────────── */
     if ((s_ingest_call_count & 0x3F) == 1)
     {
-        printf("[MFCC] IngestBlock call #%lu  warmup=%d  "
-               "fill=%lu  since_infer=%lu\r\n",
-               (unsigned long)s_ingest_call_count,
-               (int)s_warmup_done,
-               (unsigned long)s_ring_fill_count,
-               (unsigned long)s_samples_since_infer);
+//        printf("[MFCC] IngestBlock call #%lu  warmup=%d  "
+//               "fill=%lu  since_infer=%lu\r\n",
+//               (unsigned long)s_ingest_call_count,
+//               (int)s_warmup_done,
+//               (unsigned long)s_ring_fill_count,
+//               (unsigned long)s_samples_since_infer);
     }
 
     /* ── Warmup: discard first 1-second window (DMA startup transient) ─── */
@@ -268,9 +276,9 @@ void MFCC_IngestBlock(const int32_t *src, uint32_t num_frames)
         {
             s_ring_fill_count = 0U;
             s_warmup_done     = 1U;
-            printf("[MFCC] Warmup done after %lu calls — "
-                   "ring buffer filling starts now\r\n",
-                   (unsigned long)s_ingest_call_count);
+//            printf("[MFCC] Warmup done after %lu calls — "
+//                   "ring buffer filling starts now\r\n",
+//                   (unsigned long)s_ingest_call_count);
         }
         return;
     }
@@ -306,10 +314,10 @@ void MFCC_IngestBlock(const int32_t *src, uint32_t num_frames)
         g_mfcc_ready == 0U)
     {
         /* ── CHECKPOINT 3 ──────────────────────────────────────────────── */
-        printf("[MFCC] Window ready (hop=%lu samples)  "
-               "(ingest calls=%lu)\r\n",
-               (unsigned long)s_samples_since_infer,
-               (unsigned long)s_ingest_call_count);
+//        printf("[MFCC] Window ready (hop=%lu samples)  "
+//               "(ingest calls=%lu)\r\n",
+//               (unsigned long)s_samples_since_infer,
+//               (unsigned long)s_ingest_call_count);
         g_mfcc_ready = 1U;
     }
 }
@@ -425,18 +433,18 @@ void MFCC_Compute(void)
      * Compare against Python: print(mfcc_raw[0:5, 0]) on a saved .npy      */
 
     // Full coef[0] dump — compare line-by-line to Python output below
-    printf("[DUMP_C0]");
-    for (uint32_t f = 0; f < NUM_FRAMES; f++)
-        printf(" %.1f", g_mfcc_out[0 * NUM_FRAMES + f]);
-    printf("\r\n");
-
-    // All 40 coefs at frame 48 (middle of window — most likely to contain speech)
-    printf("[DUMP_F48]");
-    for (uint32_t c = 0; c < NUM_MFCC; c++)
-        printf(" %.2f", g_mfcc_out[c * NUM_FRAMES + 48]);
-    printf("\r\n");
-    printf("[MFCC] Expected from Python norm_stats: mean[0]=%.2f  std[0]=%.2f\r\n",
-           mfcc_mean[0], mfcc_std[0]);
+//    printf("[DUMP_C0]");
+//    for (uint32_t f = 0; f < NUM_FRAMES; f++)
+//        printf(" %.1f", g_mfcc_out[0 * NUM_FRAMES + f]);
+//    printf("\r\n");
+//
+//    // All 40 coefs at frame 48 (middle of window — most likely to contain speech)
+//    printf("[DUMP_F48]");
+//    for (uint32_t c = 0; c < NUM_MFCC; c++)
+//        printf(" %.2f", g_mfcc_out[c * NUM_FRAMES + 48]);
+//    printf("\r\n");
+//    printf("[MFCC] Expected from Python norm_stats: mean[0]=%.2f  std[0]=%.2f\r\n",
+//           mfcc_mean[0], mfcc_std[0]);
 
     /* Reset only the hop counter — ring buffer write index is NEVER reset   */
     s_samples_since_infer = 0U;

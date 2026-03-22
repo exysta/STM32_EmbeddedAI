@@ -41,6 +41,45 @@
 #include <stdio.h>
 #include <math.h>
 
+/* Paste at the top of the file, after includes */
+#define BENCH_N 100U
+
+static uint32_t s_bench_mfcc[BENCH_N];
+static uint32_t s_bench_inf[BENCH_N];
+static uint32_t s_bench_idx = 0;
+static uint8_t  s_bench_done = 0;
+
+void BENCH_Record(uint32_t mfcc_cycles, uint32_t inf_cycles)
+{
+    if (s_bench_done) return;
+    s_bench_mfcc[s_bench_idx] = mfcc_cycles;
+    s_bench_inf [s_bench_idx] = inf_cycles;
+    if (++s_bench_idx >= BENCH_N)
+    {
+        s_bench_done = 1;
+
+        /* Compute mean and max */
+        uint64_t sum_m = 0, sum_i = 0;
+        uint32_t max_m = 0, max_i = 0;
+        for (uint32_t k = 0; k < BENCH_N; k++) {
+            sum_m += s_bench_mfcc[k]; max_m = s_bench_mfcc[k] > max_m ? s_bench_mfcc[k] : max_m;
+            sum_i += s_bench_inf [k]; max_i = s_bench_inf [k] > max_i ? s_bench_inf [k] : max_i;
+        }
+        float mfcc_mean = (float)(sum_m / BENCH_N) / 280000.0f;
+        float inf_mean  = (float)(sum_i / BENCH_N) / 280000.0f;
+        float mfcc_max  = (float)max_m / 280000.0f;
+        float inf_max   = (float)max_i / 280000.0f;
+
+        printf("\r\n========== BENCHMARK SUMMARY (n=%u) ==========\r\n", BENCH_N);
+        printf("  MFCC      : mean=%.2f ms  max=%.2f ms\r\n", mfcc_mean, mfcc_max);
+        printf("  Inference : mean=%.2f ms  max=%.2f ms\r\n", inf_mean,  inf_max);
+        printf("  Total     : mean=%.2f ms  max=%.2f ms\r\n",
+               mfcc_mean + inf_mean, mfcc_max + inf_max);
+        printf("  Budget    : 1000 ms  →  headroom=%.0f ms\r\n",
+               1000.0f - (mfcc_mean + inf_mean));
+        printf("==============================================\r\n\r\n");
+    }
+}
 /* ── Quantisation parameters ─────────────────────────────────────────────
  *
  *  !! READ THESE FROM YOUR CUBE-AI QUANTISATION REPORT !!
@@ -67,11 +106,11 @@
  *   - Cooldown in WW_RunInference prevents false double-triggers
  *   - INMP441 signal path introduces mild distribution shift vs training data
  * If false triggers appear on background speech, raise back toward 0.80.    */
-#define WW_THRESHOLD    0.80f
+#define WW_THRESHOLD    0.75f
 
 /* ── Internal INT8 input buffer ──────────────────────────────────────────
  *  Sized to hold one full MFCC feature map: 40 coefs × 97 frames = 3880  */
-static int8_t s_model_input[MFCC_OUT_SIZE];
+static int8_t s_model_input[MFCC_OUT_SIZE] __attribute__((aligned(32)));
 
 /* ── Helpers ─────────────────────────────────────────────────────────────*/
 
@@ -117,6 +156,12 @@ void WW_Quantise(void)
         }
     }
 
+    /* Clean s_model_input from D-Cache to RAM so ST-AI DMA reads fresh data */
+    SCB_CleanDCache_by_Addr(
+        (uint32_t *)s_model_input,
+        sizeof(s_model_input)
+    );
+
     /* ── CHECKPOINT 5: normalised MFCC value range ───────────────────────
      * g_mfcc_out is COEF-MAJOR: index = coef * NUM_FRAMES + frame
      * so coef = i / NUM_FRAMES  (NOT i % MFCC_NUM_COEFS)                  */
@@ -129,14 +174,14 @@ void WW_Quantise(void)
         if (xn < x_min) x_min = xn;
         if (xn > x_max) x_max = xn;
     }
-    printf("[WW]   Normalised MFCC range: min=%.2f  max=%.2f  "
-           "(expect ~[-5, 5])\r\n", x_min, x_max);
-
-    /* ── CHECKPOINT 6: first 5 quantised INT8 values ─────────────────────
-     * Should NOT all be -128 (clamped) or all the same value.              */
-    printf("[WW]   INT8 input[0..4]: %d %d %d %d %d\r\n",
-           s_model_input[0], s_model_input[1],
-           s_model_input[2], s_model_input[3], s_model_input[4]);
+//    printf("[WW]   Normalised MFCC range: min=%.2f  max=%.2f  "
+//           "(expect ~[-5, 5])\r\n", x_min, x_max);
+//
+//    /* ── CHECKPOINT 6: first 5 quantised INT8 values ─────────────────────
+//     * Should NOT all be -128 (clamped) or all the same value.              */
+//    printf("[WW]   INT8 input[0..4]: %d %d %d %d %d\r\n",
+//           s_model_input[0], s_model_input[1],
+//           s_model_input[2], s_model_input[3], s_model_input[4]);
 }
 
 /**
@@ -161,12 +206,25 @@ int WW_RunInference(float *p_wakeword)
     /* Step 1 — Quantise */
     WW_Quantise();
 
+
     /* Step 2 — Inference */
+    // In wakeword_inference.c, around WW_RunInference()
+
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0;
+    DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
+
+    uint32_t t0 = DWT->CYCCNT;
     float p_ww = aiRunInference(s_model_input,
                                 sizeof(s_model_input),
                                 OUTPUT_SCALE,
                                 OUTPUT_ZP);
 
+    uint32_t t1 = DWT->CYCCNT;
+
+    uint32_t cycles = t1 - t0;
+    float    ms     = (float)cycles / 280000.0f;   // 280 MHz
+    printf("[BENCH] Inference: %lu cycles  →  %.2f ms\r\n", cycles, ms);
     /* ── CHECKPOINT 7: raw output ────────────────────────────────────────*/
     int raw_ww  = (int)roundf(p_ww  / OUTPUT_SCALE) + (int)OUTPUT_ZP;
     float p_neg = (p_ww >= 0.0f) ? (1.0f - p_ww) : 0.0f;

@@ -66,7 +66,7 @@
 /* USER CODE BEGIN PV */
 
 // Full ping-pong DMA buffer: 2 halves × AUDIO_BLOCK_WORDS words = 1024 int32
-int32_t dma_rx_buffer[AUDIO_BLOCK_WORDS * 2];
+int32_t dma_rx_buffer[AUDIO_BLOCK_WORDS * 2] __attribute__((aligned(32)));
 
 // Set to 1 (first half ready) or 2 (second half ready) by DMA callbacks
 volatile uint8_t audio_block_ready = 0;
@@ -103,7 +103,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+	SCB_EnableICache();   // instruction cache
+	SCB_EnableDCache();   // data cache
   /* USER CODE END 1 */
 
   /* MPU Configuration--------------------------------------------------------*/
@@ -154,7 +155,7 @@ int main(void)
 	// Inside audio_block_ready block:
 
 	printf("STM32 audio stream ready\r\n");
-
+	printf("[BOOT] SYSCLK = %lu Hz\r\n", HAL_RCC_GetSysClockFreq());
 
   /* USER CODE END 2 */
 
@@ -202,8 +203,14 @@ int main(void)
 //			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
 		}
 		if (g_mfcc_ready) {
-		    MFCC_Compute();
 
+			DWT->CYCCNT = 0;
+			uint32_t t_mfcc_start = DWT->CYCCNT;
+			MFCC_Compute();
+			uint32_t t_mfcc_end = DWT->CYCCNT;
+			printf("[BENCH] MFCC:      %lu cycles  →  %.2f ms\r\n",
+			       t_mfcc_end - t_mfcc_start,
+			       (float)(t_mfcc_end - t_mfcc_start) / 280000.0f);
 		    /* Only run the (expensive) neural-net inference when the energy
 		     * gate determined that speech-like energy is present.            */
 		    if (g_energy_gate_passed) {
