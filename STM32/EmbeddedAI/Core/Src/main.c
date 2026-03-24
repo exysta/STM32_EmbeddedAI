@@ -53,6 +53,7 @@
 
 #define SAMPLE_RATE          16000
 #define AUDIO_GAIN           10      // applied to 24-bit value — tune as needed
+#define EVAL_MODE
 
 /* USER CODE END PD */
 
@@ -93,6 +94,66 @@ int _write(int file, char *ptr, int len)
 	HAL_UART_Transmit(&huart3, (uint8_t*)ptr, len, HAL_MAX_DELAY);
 	return len;
 }
+
+#ifdef EVAL_MODE
+
+#define EVAL_SYNC_BYTE0  0xAAU
+#define EVAL_SYNC_BYTE1  0xBBU
+#define EVAL_SYNC_BYTE2  0xCCU
+#define EVAL_SYNC_BYTE3  0xDDU
+#define EVAL_BLOCK_FRAMES 256U
+
+/* Reuse the existing DMA audio buffer — already 32-byte aligned */
+extern int32_t g_audio_buf[];   /* or whatever your buffer is named */
+
+static int EVAL_ReadBlock(void)
+{
+    uint8_t  hdr[4];
+    uint8_t  raw[EVAL_BLOCK_FRAMES * 3];
+    int32_t  block[EVAL_BLOCK_FRAMES];
+
+    /* 1 — Wait for sync header */
+    uint8_t b;
+    uint8_t matched = 0;
+    const uint8_t sync[4] = {
+        EVAL_SYNC_BYTE0, EVAL_SYNC_BYTE1,
+        EVAL_SYNC_BYTE2, EVAL_SYNC_BYTE3
+    };
+    uint32_t deadline = HAL_GetTick() + 3000U;
+    while (matched < 4)
+    {
+        if (HAL_GetTick() > deadline) return -1;
+        if (HAL_UART_Receive(&huart3, &b, 1, 10) != HAL_OK) continue;
+        if (b == sync[matched]) matched++;
+        else matched = (b == sync[0]) ? 1 : 0;
+    }
+
+    /* 2 — Read 256 × 3 bytes */
+    if (HAL_UART_Receive(&huart3, raw,
+                         EVAL_BLOCK_FRAMES * 3, 500) != HAL_OK)
+        return -1;
+
+    /* 3 — Decode 24-bit LE signed → int32 left-justified
+     *     (same format as INMP441 24-bit data in 32-bit SAI frames) */
+    for (uint32_t i = 0; i < EVAL_BLOCK_FRAMES; i++)
+    {
+        int32_t v = (int32_t)(  (uint32_t)raw[i*3]
+                              | ((uint32_t)raw[i*3+1] << 8)
+                              | ((uint32_t)raw[i*3+2] << 16));
+        if (v & 0x800000) v |= 0xFF000000;   /* sign-extend */
+        block[i*2]   = v << 8;               /* left-justify to 32-bit */
+        block[i*2+1] = 0;                    /* dummy right channel */
+    }
+
+    /* 4 — Invalidate cache before CPU read (coherency) */
+    SCB_InvalidateDCache_by_Addr((uint32_t *)block, sizeof(block));
+
+    /* 5 — Feed to MFCC accumulator exactly as DMA half-callback does */
+    MFCC_IngestBlock(block, EVAL_BLOCK_FRAMES);
+    return 0;
+}
+
+#endif /* EVAL_MODE */
 /* USER CODE END 0 */
 
 /**
@@ -145,13 +206,16 @@ int main(void)
 
 	// Start DMA circular capture
 	// Element count = total words in the full ping-pong buffer
+#ifndef EVAL_MODE
 	if (HAL_SAI_Receive_DMA(&hsai_BlockA1,
 			(uint8_t*)dma_rx_buffer,
 			AUDIO_BLOCK_WORDS * 2) != HAL_OK)
 	{
 		Error_Handler();
 	}
-
+#else
+printf("[EVAL] Eval mode active — SAI disabled, waiting for UART audio\r\n");
+#endif
 	// Inside audio_block_ready block:
 
 	printf("STM32 audio stream ready\r\n");
@@ -163,7 +227,12 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 	while (1)
 	{
+#ifdef EVAL_MODE
+    /* Eval mode: pull one block from UART, feed MFCC accumulator */
+    if (EVAL_ReadBlock() != 0)
+//        printf("[EVAL] sync timeout — waiting for next frame\r\n");
 
+#else
 		if (audio_block_ready != 0)
 		{
 			// Grab and clear atomically before processing
@@ -197,11 +266,13 @@ int main(void)
 				p[1] = (uint8_t)((gained >>  8) & 0xFF);
 				p[2] = (uint8_t)((gained >> 16) & 0xFF);
 			}
-			MFCC_IngestBlock(src, AUDIO_BLOCK_FRAMES);
+//			MFCC_IngestBlock(src, AUDIO_BLOCK_FRAMES);
 
 			// Single transmit: header + packed audio
-//			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
+			HAL_UART_Transmit(&huart3, tx_buf, sizeof(tx_buf), HAL_MAX_DELAY);
 		}
+#endif
+
 		if (g_mfcc_ready) {
 
 			DWT->CYCCNT = 0;
